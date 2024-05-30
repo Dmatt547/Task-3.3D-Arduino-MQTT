@@ -1,0 +1,186 @@
+#include <WiFiNINA.h>
+#include <PubSubClient.h>
+#include "secrets.h"
+
+// WiFi credentials
+char ssid[] = SECRET_SSID;
+char pass[] = SECRET_PASS;
+
+// MQTT broker details
+const char broker[] = "bb0c91fb7b0943b59843851ba867ff54.s1.eu.hivemq.cloud"; // MQTT broker or cluster URL
+const int port = 8883; // Secure connection port
+const char waveTopic[] = "SIT210/wave"; // Topic for wave event
+const char patTopic[] = "SIT210/pat"; // Topic for pat event
+
+// Pins
+const int ledPin = 4;
+const int trigPin = 2;
+const int echoPin = 3;
+
+// WiFi and MQTT clients
+WiFiSSLClient wifiClient;
+PubSubClient mqttClient(wifiClient);
+
+// Timing
+const long interval = 1000;
+unsigned long previousMillis = 0;
+
+// Function declarations
+void setup_wifi();
+void callback(char* topic, byte* payload, unsigned int length);
+void reconnect();
+long getDistance();
+void handleWave();
+void handlePat();
+
+void setup() {
+  // Initialize serial communication
+  Serial.begin(9600);
+  while (!Serial) {
+    ;
+  }
+
+  // Set up pins
+  pinMode(ledPin, OUTPUT);
+  pinMode(trigPin, OUTPUT);
+  pinMode(echoPin, INPUT);
+
+  // Connect to WiFi
+  setup_wifi();
+
+  Serial.print("MQTT Username: ");
+  Serial.println(MQTT_USERNAME);
+  Serial.print("MQTT Password: ");
+  Serial.println(MQTT_PASSWORD);
+
+  // Set up MQTT client
+  mqttClient.setServer(broker, port);
+  mqttClient.setCallback(callback);
+  
+  reconnect();
+}
+
+void loop() {
+  if (!mqttClient.connected()) {
+    reconnect();
+  }
+  mqttClient.loop();
+
+  unsigned long currentMillis = millis();
+
+  if (currentMillis - previousMillis >= interval) {
+    previousMillis = currentMillis;
+
+    long distance = getDistance();
+
+    if (distance > 0 && distance < 10) {
+      handleWave();
+    } else if (distance >= 10 && distance < 20) {
+      handlePat();
+    }
+  }
+}
+
+void setup_wifi() {
+  Serial.print("Attempting to connect to WPA SSID: ");
+  Serial.println(ssid);
+
+  while (WiFi.begin(ssid, pass) != WL_CONNECTED) {
+    Serial.print(".");
+    delay(5000);
+  }
+
+  Serial.println("You're connected to the network");
+  Serial.println("IP address: ");
+  Serial.println(WiFi.localIP());
+}
+
+void callback(char* topic, byte* payload, unsigned int length) {
+  Serial.print("Message arrived [");
+  Serial.print(topic);
+  Serial.print("] ");
+
+  for (unsigned int i = 0; i < length; i++) {
+    Serial.print((char)payload[i]);
+  }
+  Serial.println();
+
+  for (int i = 0; i < 3; i++) {
+    digitalWrite(ledPin, HIGH);
+    delay(500);
+    digitalWrite(ledPin, LOW);
+    delay(500);
+  }
+}
+
+void reconnect() {
+  // Loop until we're reconnected
+  while (!mqttClient.connected()) {
+    Serial.print("Attempting MQTT connection...");
+    // Attempt to connect
+    if (mqttClient.connect("arduinoClient", MQTT_USERNAME, MQTT_PASSWORD)) {
+      Serial.println("connected");
+      // Once connected, publish an announcement...
+      mqttClient.publish(waveTopic, "hello world");
+
+      mqttClient.subscribe(waveTopic);
+      mqttClient.subscribe(patTopic);
+    } else {
+      Serial.print("failed, rc=");
+      Serial.print(mqttClient.state());
+      Serial.println(" try again in 5 seconds");
+
+      delay(5000);
+    }
+  }
+}
+
+long getDistance() {
+  long duration, distance;
+  digitalWrite(trigPin, LOW);
+  delayMicroseconds(2);
+  digitalWrite(trigPin, HIGH);
+  delayMicroseconds(10);
+  digitalWrite(trigPin, LOW);
+  duration = pulseIn(echoPin, HIGH);
+  distance = (duration / 2) / 29.1;
+
+
+  if (distance > 400 || distance <= 0) {
+    distance = -1;
+  }
+  
+  return distance;
+}
+
+void handleWave() {
+  String message = "wave detected by [Your Name]";
+  mqttClient.publish(waveTopic, message.c_str());
+  Serial.print("Sending message to topic: ");
+  Serial.println(waveTopic);
+  Serial.println(message);
+
+  // Flash the LED 3 times for a wave
+  for (int i = 0; i < 3; i++) {
+    digitalWrite(ledPin, HIGH);
+    delay(500);
+    digitalWrite(ledPin, LOW);
+    delay(500);
+  }
+}
+
+void handlePat() {
+  String message = "pat detected by [Your Name]";
+  mqttClient.publish(patTopic, message.c_str());
+  Serial.print("Sending message to topic: ");
+  Serial.println(patTopic);
+  Serial.println(message);
+
+  // Flash the LED in a different pattern for a pat
+  for (int i = 0; i < 5; i++) {
+    digitalWrite(ledPin, HIGH);
+    delay(200);
+    digitalWrite(ledPin, LOW);
+    delay(200);
+  }
+}
